@@ -1,0 +1,41 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npx create-next-app@14 agendly-panel --typescript --tailwind --eslint --app --no-src-dir --import-alias \"@/*\" --no-git)",
+      "Bash(npx shadcn@latest init --defaults)",
+      "Bash(npx shadcn@latest add input label card badge table dialog form select switch calendar tabs separator avatar skeleton --yes)",
+      "Bash(npx shadcn@latest add form --yes)",
+      "mcp__claude_ai_Supabase__apply_migration",
+      "mcp__claude_ai_Supabase__get_publishable_keys",
+      "Bash(npm run:*)",
+      "Bash(taskkill /PID 32212 /F)",
+      "Bash(taskkill /PID 6328 /F)",
+      "Bash(cmd /c \"taskkill /PID 32212 /F & taskkill /PID 6328 /F\")",
+      "Bash(cmd /c \"taskkill /IM node.exe /F 2>&1\")",
+      "Bash(cmd /c \"netstat -ano | findstr :3000 | findstr LISTEN\")",
+      "Bash(cmd /c \"netstat -ano | findstr LISTEN | findstr :300\")",
+      "Bash(cmd /c \"taskkill /F /PID 32212\")",
+      "Bash(cmd /c \"taskkill /F /PID 6328\")",
+      "Bash(powershell -Command \"Get-Process -Name node -ErrorAction SilentlyContinue | Stop-Process -Force; Write-Host 'Todos los procesos node terminados'\")",
+      "Bash(xargs grep:*)",
+      "Bash(powershell -Command \"Remove-Item -Recurse -Force ''C:\\\\Users\\\\vongo\\\\Documents\\\\Agendly\\\\agendly-panel''\")",
+      "Bash(powershell -Command \"Get-Process | Where-Object { \\\\$_.MainWindowTitle -like '*agendly*' -or \\\\$_.Path -like '*agendly*' } | Select-Object Name, Id, Path\" 2>/dev/null)",
+      "Bash(powershell -Command \"\n\\\\$path = 'C:\\\\Users\\\\vongo\\\\Documents\\\\Agendly\\\\agendly-panel'\nif \\(Test-Path \\\\$path\\) {\n  Get-ChildItem -Path \\\\$path -Recurse | Remove-Item -Force -Recurse -ErrorAction SilentlyContinue\n  Remove-Item -Path \\\\$path -Force -Recurse -ErrorAction SilentlyContinue\n  if \\(Test-Path \\\\$path\\) { 'FALLO: aún existe' } else { 'Eliminado OK' }\n} else { 'No existe \\(ya fue eliminado\\)' }\n\")",
+      "Bash(powershell -Command \"\n\\\\$path = 'C:\\\\Users\\\\vongo\\\\Documents\\\\Agendly\\\\agendly-panel'\nGet-ChildItem -Path \\\\$path -ErrorAction SilentlyContinue | Select-Object -First 10 Name, LastWriteTime\n\")",
+      "Bash(powershell -Command \"Test-Path 'C:\\\\Users\\\\vongo\\\\Documents\\\\Agendly\\\\agendly-panel'\")",
+      "Bash(powershell -Command \"\n\\\\$path = 'C:\\\\Users\\\\vongo\\\\Documents\\\\Agendly\\\\agendly-panel'\n\\(Get-ChildItem -Path \\\\$path -ErrorAction SilentlyContinue\\).Count\n\")",
+      "Bash(powershell -Command \"Remove-Item -Force ''C:\\\\Users\\\\vongo\\\\Documents\\\\Agendly\\\\agendly-panel''\")",
+      "Bash(npx create-next-app@14.2.29 agendly-panel --typescript --tailwind --eslint --app --no-src-dir --import-alias \"@/*\" --yes)",
+      "Bash(node -e \":*)",
+      "Bash(npx shadcn@latest init -d)",
+      "Bash(npm uninstall:*)",
+      "Bash(npx shadcn@latest add button input label card badge table dialog form select switch calendar tabs separator avatar skeleton --overwrite)",
+      "Bash(cd:*)",
+      "mcp__claude_ai_Supabase__list_tables",
+      "mcp__claude_ai_Supabase__execute_sql",
+      "Bash(npx shadcn@latest add textarea --overwrite)"
+    ]
+  }
+}
