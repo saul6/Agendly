@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__claude_ai_Supabase__apply_migration",
+      "Bash(npm run:*)",
+      "Bash(npm uninstall:*)",
+      "Bash(find C:UsersvongoDocumentsAgendlyagendly-panel -type f -name *service*)",
+      "Bash(ls -la C:UsersvongoDocumentsAgendlyagendly-panelapp\\\\\\(dashboard\\\\\\))",
+      "Bash(ls:*)",
+      "Bash(xargs grep:*)",
+      "Bash(grep -r import.*zod C:UsersvongoDocumentsAgendlyagendly-panel/src C:UsersvongoDocumentsAgendlyagendly-panel/lib)",
+      "Bash(npx tsc:*)",
+      "Bash(npm install:*)"
+    ]
+  }
+}

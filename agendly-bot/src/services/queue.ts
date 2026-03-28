@@ -1,112 +1,56 @@
-import { Queue, Worker } from 'bullmq';
-import { Redis } from '@upstash/redis';
+import { sendText } from './whatsapp.js';
+import { getAppointmentsDueForReminder, markReminderSent } from './supabase.js';
 
-// ─── Conexión Redis (Upstash compatible con BullMQ via ioredis-compatible URL) ─
+const POLL_INTERVAL_MS = 60_000; // 1 minuto
 
-// BullMQ requiere ioredis. Upstash Redis HTTP client no es compatible directamente,
-// por lo que usamos la URL con el adapter de conexión.
-const connection = {
-  host: new URL(process.env.UPSTASH_REDIS_URL ?? 'redis://localhost:6379').hostname,
-  port: Number(new URL(process.env.UPSTASH_REDIS_URL ?? 'redis://localhost:6379').port) || 6379,
-  password: process.env.UPSTASH_REDIS_TOKEN,
-  tls: process.env.UPSTASH_REDIS_URL?.startsWith('rediss://') ? {} : undefined,
-};
+// Ventana 24h: entre 23h y 25h antes de la cita
+const WINDOW_24H_MIN = 23 * 60 * 60 * 1000;
+const WINDOW_24H_MAX = 25 * 60 * 60 * 1000;
 
-// ─── Queues ───────────────────────────────────────────────────────────────────
+// Ventana 1h: entre 45min y 75min antes de la cita
+const WINDOW_1H_MIN = 45 * 60 * 1000;
+const WINDOW_1H_MAX = 75 * 60 * 1000;
 
-export const reminderQueue = new Queue('reminders', { connection });
-export const notificationQueue = new Queue('notifications', { connection });
+// ─── Worker de recordatorios ──────────────────────────────────────────────────
 
-// ─── Jobs ─────────────────────────────────────────────────────────────────────
-
-export interface ReminderJobData {
-  appointmentId: string;
-  customerPhone: string;
-  phoneNumberId: string;
-  reminderType: '24h' | '1h';
-  appointmentDateTime: string;
+export function startReminderWorker(): NodeJS.Timeout {
+  console.log('[queue] Worker de recordatorios iniciado (cron cada 60s)');
+  // Ejecutar inmediatamente al arrancar y luego cada minuto
+  void processReminders();
+  return setInterval(() => void processReminders(), POLL_INTERVAL_MS);
 }
 
-export interface NotificationJobData {
-  type: 'booking_confirmed' | 'payment_received' | 'cancellation';
-  appointmentId: string;
-  staffPhone?: string;
-}
+async function processReminders(): Promise<void> {
+  try {
+    const appointments = await getAppointmentsDueForReminder();
+    if (!appointments.length) return;
 
-// ─── Programar recordatorios para una cita ────────────────────────────────────
+    const now = Date.now();
 
-export async function scheduleReminders(
-  appointmentId: string,
-  slotStartTime: string,
-): Promise<void> {
-  const startMs = new Date(slotStartTime).getTime();
-  const now = Date.now();
-
-  const reminder24h = startMs - 24 * 60 * 60 * 1000;
-  const reminder1h = startMs - 60 * 60 * 1000;
-
-  if (reminder24h > now) {
-    await reminderQueue.add(
-      'send-reminder',
-      { appointmentId, reminderType: '24h', appointmentDateTime: slotStartTime } as ReminderJobData,
-      {
-        delay: reminder24h - now,
-        jobId: `reminder-24h-${appointmentId}`,
-        removeOnComplete: true,
-        removeOnFail: false,
+    for (const apt of appointments) {
+      if (!apt.phone_number_id) {
+        console.warn(`[queue] Cita ${apt.id} sin phone_number_id en business — recordatorio omitido`);
+        continue;
       }
-    );
+
+      const startMs = new Date(apt.slot_start_time).getTime();
+      const diff = startMs - now;
+
+      let message: string | null = null;
+
+      if (diff >= WINDOW_24H_MIN && diff <= WINDOW_24H_MAX) {
+        message = '⏰ Recordatorio: tienes una cita mañana. Escribe *menu* para ver tus citas o *cancelar* si no puedes asistir.';
+      } else if (diff >= WINDOW_1H_MIN && diff <= WINDOW_1H_MAX) {
+        message = '⏰ Tu cita es en 1 hora. ¡Te esperamos!';
+      }
+
+      if (message) {
+        await sendText(apt.phone_number_id, apt.customer_phone, message);
+        await markReminderSent(apt.id);
+        console.log(`[queue] Recordatorio enviado para cita ${apt.id}`);
+      }
+    }
+  } catch (err) {
+    console.error('[queue] Error procesando recordatorios:', err);
   }
-
-  if (reminder1h > now) {
-    await reminderQueue.add(
-      'send-reminder',
-      { appointmentId, reminderType: '1h', appointmentDateTime: slotStartTime } as ReminderJobData,
-      {
-        delay: reminder1h - now,
-        jobId: `reminder-1h-${appointmentId}`,
-        removeOnComplete: true,
-        removeOnFail: false,
-      }
-    );
-  }
-}
-
-export async function cancelReminders(appointmentId: string): Promise<void> {
-  const job24h = await reminderQueue.getJob(`reminder-24h-${appointmentId}`);
-  const job1h = await reminderQueue.getJob(`reminder-1h-${appointmentId}`);
-  await job24h?.remove();
-  await job1h?.remove();
-}
-
-// ─── Worker de recordatorios (inicializar en index.ts) ────────────────────────
-
-export function startReminderWorker(): Worker {
-  const worker = new Worker(
-    'reminders',
-    async (job) => {
-      const data = job.data as ReminderJobData;
-      console.log(`[queue] Enviando recordatorio ${data.reminderType} para cita ${data.appointmentId}`);
-
-      // Importación dinámica para evitar dependencia circular
-      const { sendText } = await import('./whatsapp.js');
-      const { getAppointmentsByPhone } = await import('./supabase.js');
-
-      const message =
-        data.reminderType === '24h'
-          ? `⏰ Recordatorio: tienes una cita mañana. Escribe *menu* para ver tus citas o *cancelar* si no puedes asistir.`
-          : `⏰ Tu cita es en 1 hora. ¡Te esperamos!`;
-
-      if (data.phoneNumberId && data.customerPhone) {
-        await sendText(data.phoneNumberId, data.customerPhone, message);
-      }
-    },
-    { connection }
-  );
-
-  worker.on('failed', (job, err) => {
-    console.error(`[queue] Job ${job?.id} falló:`, err);
-  });
-
-  return worker;
 }

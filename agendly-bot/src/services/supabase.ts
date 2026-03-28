@@ -1,4 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
+import {
+  getConversationFromRedis,
+  setConversationInRedis,
+} from './redis.js';
 import type {
   Business,
   Service,
@@ -39,6 +43,15 @@ export async function getBusinessById(id: string): Promise<Business | null> {
 }
 
 // ─── Services ─────────────────────────────────────────────────────────────────
+
+export async function getServiceById(serviceId: string): Promise<Service | null> {
+  const { data } = await supabase
+    .from('services')
+    .select('*')
+    .eq('id', serviceId)
+    .single();
+  return data;
+}
 
 export async function getServices(businessId: string): Promise<Service[]> {
   const { data } = await supabase
@@ -97,7 +110,7 @@ export async function getAvailableSlots(
 // ─── Appointments ─────────────────────────────────────────────────────────────
 
 export async function createAppointment(
-  payload: Omit<Appointment, 'id' | 'created_at' | 'updated_at' | 'notes' | 'payment_link'>
+  payload: Omit<Appointment, 'id' | 'created_at' | 'updated_at' | 'notes' | 'payment_link' | 'reminder_sent'>
 ): Promise<Appointment> {
   const { data, error } = await supabase
     .from('appointments')
@@ -130,6 +143,87 @@ export async function getAppointmentsByPhone(
   return data ?? [];
 }
 
+export async function getAppointmentById(appointmentId: string): Promise<Appointment | null> {
+  const { data } = await supabase
+    .from('appointments')
+    .select('*')
+    .eq('id', appointmentId)
+    .single();
+  return data;
+}
+
+export async function storePaymentLink(
+  appointmentId: string,
+  paymentLink: string
+): Promise<void> {
+  await supabase
+    .from('appointments')
+    .update({ payment_link: paymentLink, updated_at: new Date().toISOString() })
+    .eq('id', appointmentId);
+}
+
+export async function markAppointmentPaid(
+  appointmentId: string,
+  paymentLink: string
+): Promise<void> {
+  await supabase
+    .from('appointments')
+    .update({
+      payment_status: 'paid',
+      payment_link: paymentLink,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', appointmentId);
+}
+
+export async function markReminderSent(appointmentId: string): Promise<void> {
+  await supabase
+    .from('appointments')
+    .update({ reminder_sent: true, updated_at: new Date().toISOString() })
+    .eq('id', appointmentId);
+}
+
+// ─── Recordatorios (cron) ─────────────────────────────────────────────────────
+
+export interface AppointmentReminder {
+  id: string;
+  customer_phone: string;
+  slot_start_time: string;
+  phone_number_id: string | null;
+}
+
+export async function getAppointmentsDueForReminder(): Promise<AppointmentReminder[]> {
+  // Buscar citas confirmadas sin recordatorio cuyo slot está entre 45min y 25h en el futuro
+  const now = new Date();
+  const windowStart = new Date(now.getTime() + 45 * 60 * 1000).toISOString();
+  const windowEnd = new Date(now.getTime() + 25 * 60 * 60 * 1000).toISOString();
+
+  const { data } = await supabase
+    .from('appointments')
+    .select(`
+      id,
+      customer_phone,
+      slots (start_time),
+      businesses (phone_number_id)
+    `)
+    .eq('status', 'confirmed')
+    .eq('reminder_sent', false);
+
+  if (!data) return [];
+
+  return (data as any[])
+    .filter((a) => {
+      const startTime: string | undefined = a.slots?.start_time;
+      return startTime && startTime >= windowStart && startTime <= windowEnd;
+    })
+    .map((a) => ({
+      id: a.id,
+      customer_phone: a.customer_phone,
+      slot_start_time: a.slots.start_time,
+      phone_number_id: a.businesses?.phone_number_id ?? null,
+    }));
+}
+
 export async function updateAppointmentPayment(
   appointmentId: string,
   paymentStatus: 'paid' | 'failed',
@@ -151,12 +245,32 @@ export async function getConversation(
   businessId: string,
   customerPhone: string
 ): Promise<Conversation | null> {
+  // Intenta Redis primero (1-3ms), cae a Supabase si no está en caché (20-80ms)
+  const cached = await getConversationFromRedis(businessId, customerPhone);
+  if (cached) {
+    return {
+      id: '',
+      business_id: businessId,
+      customer_phone: customerPhone,
+      state: cached.state,
+      context: cached.context,
+      last_message_at: '',
+      created_at: '',
+    } satisfies Conversation;
+  }
+
   const { data } = await supabase
     .from('conversations')
     .select('*')
     .eq('business_id', businessId)
     .eq('customer_phone', customerPhone)
     .single();
+
+  if (data) {
+    // Calentar el caché para la próxima vez
+    await setConversationInRedis(businessId, customerPhone, data.state, data.context);
+  }
+
   return data;
 }
 
@@ -166,16 +280,20 @@ export async function upsertConversation(
   state: FlowState,
   context: ConversationContext
 ): Promise<void> {
-  await supabase.from('conversations').upsert(
-    {
-      business_id: businessId,
-      customer_phone: customerPhone,
-      state,
-      context,
-      last_message_at: new Date().toISOString(),
-    },
-    { onConflict: 'business_id,customer_phone' }
-  );
+  // Escribir en Redis (rápido) y Supabase (persistente) en paralelo
+  await Promise.all([
+    setConversationInRedis(businessId, customerPhone, state, context),
+    supabase.from('conversations').upsert(
+      {
+        business_id: businessId,
+        customer_phone: customerPhone,
+        state,
+        context,
+        last_message_at: new Date().toISOString(),
+      },
+      { onConflict: 'business_id,customer_phone' }
+    ),
+  ]);
 }
 
 // ─── AI Usage ─────────────────────────────────────────────────────────────────

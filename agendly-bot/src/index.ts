@@ -1,7 +1,9 @@
+import 'dotenv/config';
 import { Hono } from 'hono';
 import { logger } from 'hono/logger';
 import { secureHeaders } from 'hono/secure-headers';
 import webhook from './webhooks/whatsapp.js';
+import conektaWebhook from './webhooks/conekta.js';
 import { startReminderWorker } from './services/queue.js';
 
 const app = new Hono();
@@ -18,6 +20,7 @@ app.get('/health', (c) => c.json({ status: 'ok', ts: Date.now() }));
 // ─── Rutas ────────────────────────────────────────────────────────────────────
 
 app.route('/webhook/whatsapp', webhook);
+app.route('/webhook/conekta', conektaWebhook);
 
 // ─── 404 ──────────────────────────────────────────────────────────────────────
 

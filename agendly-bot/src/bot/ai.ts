@@ -44,7 +44,13 @@ export async function handleAI(
 
   const systemPrompt = buildSystemPrompt(
     business?.name ?? 'el negocio',
-    services.map((s) => `${s.name} ($${s.price}, ${s.duration_minutes} min)`).join(', ')
+    services.map((s) => {
+      const parts = [
+        s.price ? `$${s.price}` : 'precio a convenir',
+        s.duration_minutes ? `${s.duration_minutes} min` : null,
+      ].filter(Boolean).join(', ')
+      return `${s.name} (${parts})`
+    }).join(', ')
   );
 
   const updatedHistory: AiMessage[] = [

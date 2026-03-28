@@ -2,15 +2,17 @@ import {
   getConversation,
   upsertConversation,
   getServices,
+  getServiceById,
   getStaffForService,
   getAvailableSlots,
   createAppointment,
   getAppointmentsByPhone,
   cancelAppointment,
+  getBusinessById,
+  storePaymentLink,
 } from '../services/supabase.js';
 import { sendText, sendList, sendButtons } from '../services/whatsapp.js';
 import { createPaymentLink } from '../services/payments.js';
-import { scheduleReminders } from '../services/queue.js';
 import {
   STATES,
   BUTTON_IDS,
@@ -118,7 +120,10 @@ async function handleGreeting(event: IncomingEvent, context: ConversationContext
           rows: services.map((s) => ({
             id: `service_${s.id}`,
             title: s.name,
-            description: `$${s.price} · ${s.duration_minutes} min`,
+            description: [
+              s.price ? `$${s.price}` : null,
+              s.duration_minutes ? `${s.duration_minutes} min` : null,
+            ].filter(Boolean).join(' · '),
           })),
         },
       ],
@@ -321,14 +326,47 @@ async function handleConfirmBooking(event: IncomingEvent, context: ConversationC
       payment_status: 'pending',
     });
 
-    // Programar recordatorios
-    await scheduleReminders(appointment.id, appointment.slot_id);
+    const folio = appointment.id.slice(-6).toUpperCase();
 
-    await sendText(phoneNumberId, customerPhone,
-      `✅ *¡Cita confirmada!*\n\n🆔 Folio: #${appointment.id.slice(-6).toUpperCase()}\n📅 ${context.selected_date}\n\nTe enviaremos un recordatorio. ¡Hasta pronto! 👋`
-    );
+    // Fix 1: enviar link de pago si el negocio lo requiere Y el servicio tiene precio
+    const business = await getBusinessById(businessId);
+    const service = await getServiceById(context.selected_service_id!);
+    const hasPrice = service?.price != null && service.price > 0;
 
-    await upsertConversation(businessId, customerPhone, STATES.BOOKING_CONFIRMED, {});
+    if (business?.requires_payment && hasPrice) {
+      try {
+        const paymentLink = await createPaymentLink({
+          appointmentId: appointment.id,
+          serviceName: service?.name ?? 'Servicio',
+          priceInCents: Math.round((service!.price!) * 100),
+          customerName: customerName || context.customer_name || 'Cliente',
+          customerPhone,
+        });
+
+        await storePaymentLink(appointment.id, paymentLink);
+
+        await sendText(phoneNumberId, customerPhone,
+          `✅ *¡Cita confirmada!*\n\n🆔 Folio: #${folio}\n📅 ${context.selected_date}\n\n💳 *Completa tu pago aquí:*\n${paymentLink}\n\n_El link vence en 24 horas._`
+        );
+        await upsertConversation(businessId, customerPhone, STATES.AWAITING_PAYMENT, {});
+      } catch (payErr) {
+        console.error('[flow] Error generando link de pago:', payErr);
+        // Cita ya creada — confirmar sin pago y notificar
+        await sendText(phoneNumberId, customerPhone,
+          `✅ *¡Cita confirmada!*\n\n🆔 Folio: #${folio}\n📅 ${context.selected_date}\n\n⚠️ No pudimos generar el link de pago. El negocio te contactará para coordinar el pago.`
+        );
+        await upsertConversation(businessId, customerPhone, STATES.BOOKING_CONFIRMED, {});
+      }
+    } else {
+      // Sin precio configurado → confirmar directo sin cobro
+      await sendText(phoneNumberId, customerPhone,
+        `✅ *¡Cita confirmada!*\n\n🆔 Folio: #${folio}\n📅 ${context.selected_date}\n\nTe enviaremos un recordatorio. ¡Hasta pronto! 👋`
+      );
+      await upsertConversation(businessId, customerPhone, STATES.BOOKING_CONFIRMED, {});
+    }
+
+    // Fix 2: el cron-job en queue.ts lee reminder_sent y slot.start_time directamente
+    // de la BD — no es necesario programar nada aquí.
   } catch (err) {
     console.error('[flow] Error creando cita:', err);
     await sendText(phoneNumberId, customerPhone, ERROR_MESSAGES.BOOKING_FAILED);

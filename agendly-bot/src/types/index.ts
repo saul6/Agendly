@@ -35,6 +35,7 @@ export interface Business {
   cancellation_hours: number;
   requires_payment: boolean;
   welcome_message: string | null;
+  phone_number_id: string | null;
   created_at: string;
 }
 
@@ -43,8 +44,8 @@ export interface Service {
   business_id: string;
   name: string;
   description: string | null;
-  duration_minutes: number;
-  price: number;
+  duration_minutes: number | null;
+  price: number | null;
   is_active: boolean;
 }
 
@@ -76,6 +77,7 @@ export interface Appointment {
   payment_status: PaymentStatus;
   payment_link: string | null;
   notes: string | null;
+  reminder_sent: boolean;
   created_at: string;
   updated_at: string;
 }

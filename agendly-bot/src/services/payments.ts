@@ -1,4 +1,5 @@
 // Conekta — generación de links de pago
+import { createHmac } from 'crypto';
 
 interface ConektaOrderPayload {
   currency: string;
@@ -99,9 +100,7 @@ export function verifyConektaWebhookSignature(
   signature: string,
   secret: string
 ): boolean {
-  const crypto = require('crypto');
-  const expected = crypto
-    .createHmac('sha256', secret)
+  const expected = createHmac('sha256', secret)
     .update(rawBody)
     .digest('hex');
   return expected === signature;
