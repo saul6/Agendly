@@ -1,17 +1,22 @@
-import 'dotenv/config';
+import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { logger } from 'hono/logger';
-import { secureHeaders } from 'hono/secure-headers';
 import webhook from './webhooks/whatsapp.js';
 import conektaWebhook from './webhooks/conekta.js';
 import { startReminderWorker } from './services/queue.js';
+
+console.log('ENV CHECK:', {
+  SUPABASE_URL: process.env.SUPABASE_URL ? 'OK' : 'MISSING',
+  SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY ? 'OK' : 'MISSING',
+  META_VERIFY_TOKEN: process.env.META_VERIFY_TOKEN ? 'OK' : 'MISSING',
+  PORT: process.env.PORT,
+});
 
 const app = new Hono();
 
 // ─── Middlewares ──────────────────────────────────────────────────────────────
 
 app.use('*', logger());
-app.use('*', secureHeaders());
 
 // ─── Health check ─────────────────────────────────────────────────────────────
 
@@ -28,12 +33,12 @@ app.notFound((c) => c.json({ error: 'Not found' }, 404));
 
 // ─── Inicio del servidor ──────────────────────────────────────────────────────
 
-const port = Number(process.env.PORT ?? 3000);
-
 startReminderWorker();
-console.log(`[server] Agendly Bot corriendo en http://localhost:${port}`);
 
-export default {
-  port,
+serve({
   fetch: app.fetch,
-};
+  port: Number(process.env.PORT) || 8080,
+  hostname: '0.0.0.0',
+}, (info) => {
+  console.log(`[server] Agendly Bot corriendo en http://${info.address}:${info.port}`);
+});
