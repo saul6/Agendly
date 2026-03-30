@@ -32,10 +32,19 @@ webhook.post('/', async (c) => {
     return c.json({ error: 'Invalid JSON' }, 400);
   }
 
-  // Meta espera 200 inmediato aunque el procesamiento tarde
-  c.executionCtx?.waitUntil(processWebhook(body).catch(console.error));
+  // Responder 200 inmediatamente a Meta
+  const response = c.json({ status: 'ok' }, 200);
 
-  return c.json({ status: 'ok' }, 200);
+  // Procesar en background sin bloquear
+  setImmediate(async () => {
+    try {
+      await processWebhook(body);
+    } catch (error) {
+      console.error('[webhook] Error procesando mensaje:', error);
+    }
+  });
+
+  return response;
 });
 
 // ─── Procesamiento asíncrono ──────────────────────────────────────────────────
