@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import {
   getConversationFromRedis,
   setConversationInRedis,
@@ -15,17 +15,21 @@ import type {
   AiUsage,
 } from '../types/index.js';
 
-const supabase = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+let _client: SupabaseClient | null = null;
 
-export default supabase;
+export function getSupabaseClient(): SupabaseClient {
+  if (!_client) {
+    const url = process.env.SUPABASE_URL!;
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+    _client = createClient(url, key);
+  }
+  return _client;
+}
 
 // ─── Businesses ───────────────────────────────────────────────────────────────
 
 export async function getBusinessByPhone(waNumber: string): Promise<Business | null> {
-  const { data } = await supabase
+  const { data } = await getSupabaseClient()
     .from('businesses')
     .select('*')
     .eq('whatsapp_number', waNumber)
@@ -34,7 +38,7 @@ export async function getBusinessByPhone(waNumber: string): Promise<Business | n
 }
 
 export async function getBusinessById(id: string): Promise<Business | null> {
-  const { data } = await supabase
+  const { data } = await getSupabaseClient()
     .from('businesses')
     .select('*')
     .eq('id', id)
@@ -45,7 +49,7 @@ export async function getBusinessById(id: string): Promise<Business | null> {
 // ─── Services ─────────────────────────────────────────────────────────────────
 
 export async function getServiceById(serviceId: string): Promise<Service | null> {
-  const { data } = await supabase
+  const { data } = await getSupabaseClient()
     .from('services')
     .select('*')
     .eq('id', serviceId)
@@ -54,7 +58,7 @@ export async function getServiceById(serviceId: string): Promise<Service | null>
 }
 
 export async function getServices(businessId: string): Promise<Service[]> {
-  const { data } = await supabase
+  const { data } = await getSupabaseClient()
     .from('services')
     .select('*')
     .eq('business_id', businessId)
@@ -69,7 +73,7 @@ export async function getStaffForService(
   businessId: string,
   serviceId: string
 ): Promise<Staff[]> {
-  const { data } = await supabase
+  const { data } = await getSupabaseClient()
     .from('staff_services')
     .select('staff:staff_id(*)')
     .eq('service_id', serviceId);
@@ -88,7 +92,7 @@ export async function getAvailableSlots(
   staffId: string | undefined,
   date: string // YYYY-MM-DD
 ): Promise<Slot[]> {
-  let query = supabase
+  let query = getSupabaseClient()
     .from('slots')
     .select('*, staff:staff_id(business_id)')
     .eq('is_available', true)
@@ -112,7 +116,7 @@ export async function getAvailableSlots(
 export async function createAppointment(
   payload: Omit<Appointment, 'id' | 'created_at' | 'updated_at' | 'notes' | 'payment_link' | 'reminder_sent'>
 ): Promise<Appointment> {
-  const { data, error } = await supabase
+  const { data, error } = await getSupabaseClient()
     .from('appointments')
     .insert(payload)
     .select()
@@ -123,7 +127,7 @@ export async function createAppointment(
 }
 
 export async function cancelAppointment(appointmentId: string): Promise<void> {
-  await supabase
+  await getSupabaseClient()
     .from('appointments')
     .update({ status: 'cancelled', updated_at: new Date().toISOString() })
     .eq('id', appointmentId);
@@ -133,7 +137,7 @@ export async function getAppointmentsByPhone(
   businessId: string,
   customerPhone: string
 ): Promise<Appointment[]> {
-  const { data } = await supabase
+  const { data } = await getSupabaseClient()
     .from('appointments')
     .select('*')
     .eq('business_id', businessId)
@@ -144,7 +148,7 @@ export async function getAppointmentsByPhone(
 }
 
 export async function getAppointmentById(appointmentId: string): Promise<Appointment | null> {
-  const { data } = await supabase
+  const { data } = await getSupabaseClient()
     .from('appointments')
     .select('*')
     .eq('id', appointmentId)
@@ -156,7 +160,7 @@ export async function storePaymentLink(
   appointmentId: string,
   paymentLink: string
 ): Promise<void> {
-  await supabase
+  await getSupabaseClient()
     .from('appointments')
     .update({ payment_link: paymentLink, updated_at: new Date().toISOString() })
     .eq('id', appointmentId);
@@ -166,7 +170,7 @@ export async function markAppointmentPaid(
   appointmentId: string,
   paymentLink: string
 ): Promise<void> {
-  await supabase
+  await getSupabaseClient()
     .from('appointments')
     .update({
       payment_status: 'paid',
@@ -177,7 +181,7 @@ export async function markAppointmentPaid(
 }
 
 export async function markReminderSent(appointmentId: string): Promise<void> {
-  await supabase
+  await getSupabaseClient()
     .from('appointments')
     .update({ reminder_sent: true, updated_at: new Date().toISOString() })
     .eq('id', appointmentId);
@@ -188,8 +192,11 @@ export async function markReminderSent(appointmentId: string): Promise<void> {
 export interface AppointmentReminder {
   id: string;
   customer_phone: string;
+  customer_name: string;
   slot_start_time: string;
   phone_number_id: string | null;
+  service_name: string;
+  business_name: string;
 }
 
 export async function getAppointmentsDueForReminder(): Promise<AppointmentReminder[]> {
@@ -198,13 +205,15 @@ export async function getAppointmentsDueForReminder(): Promise<AppointmentRemind
   const windowStart = new Date(now.getTime() + 45 * 60 * 1000).toISOString();
   const windowEnd = new Date(now.getTime() + 25 * 60 * 60 * 1000).toISOString();
 
-  const { data } = await supabase
+  const { data } = await getSupabaseClient()
     .from('appointments')
     .select(`
       id,
       customer_phone,
-      slots (start_time),
-      businesses (phone_number_id)
+      customer_name,
+      slots!slot_id (start_time),
+      services!service_id (name),
+      businesses!business_id (phone_number_id, name, reminders_enabled)
     `)
     .eq('status', 'confirmed')
     .eq('reminder_sent', false);
@@ -213,14 +222,18 @@ export async function getAppointmentsDueForReminder(): Promise<AppointmentRemind
 
   return (data as any[])
     .filter((a) => {
+      if (!a.businesses?.reminders_enabled) return false;
       const startTime: string | undefined = a.slots?.start_time;
       return startTime && startTime >= windowStart && startTime <= windowEnd;
     })
     .map((a) => ({
       id: a.id,
       customer_phone: a.customer_phone,
+      customer_name: a.customer_name ?? 'Cliente',
       slot_start_time: a.slots.start_time,
       phone_number_id: a.businesses?.phone_number_id ?? null,
+      service_name: a.services?.name ?? 'tu servicio',
+      business_name: a.businesses?.name ?? 'el negocio',
     }));
 }
 
@@ -229,7 +242,7 @@ export async function updateAppointmentPayment(
   paymentStatus: 'paid' | 'failed',
   paymentLink?: string
 ): Promise<void> {
-  await supabase
+  await getSupabaseClient()
     .from('appointments')
     .update({
       payment_status: paymentStatus,
@@ -259,7 +272,7 @@ export async function getConversation(
     } satisfies Conversation;
   }
 
-  const { data } = await supabase
+  const { data } = await getSupabaseClient()
     .from('conversations')
     .select('*')
     .eq('business_id', businessId)
@@ -283,7 +296,7 @@ export async function upsertConversation(
   // Escribir en Redis (rápido) y Supabase (persistente) en paralelo
   await Promise.all([
     setConversationInRedis(businessId, customerPhone, state, context),
-    supabase.from('conversations').upsert(
+    getSupabaseClient().from('conversations').upsert(
       {
         business_id: businessId,
         customer_phone: customerPhone,
@@ -301,5 +314,5 @@ export async function upsertConversation(
 export async function logAiUsage(
   payload: Omit<AiUsage, 'id' | 'created_at'>
 ): Promise<void> {
-  await supabase.from('ai_usage').insert(payload);
+  await getSupabaseClient().from('ai_usage').insert(payload);
 }

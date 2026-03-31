@@ -36,6 +36,7 @@ export interface Business {
   requires_payment: boolean;
   welcome_message: string | null;
   phone_number_id: string | null;
+  reminders_enabled: boolean;
   created_at: string;
 }
 

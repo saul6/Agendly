@@ -15,7 +15,6 @@ const WINDOW_1H_MAX = 75 * 60 * 1000;
 
 export function startReminderWorker(): NodeJS.Timeout {
   console.log('[queue] Worker de recordatorios iniciado (cron cada 60s)');
-  // Ejecutar inmediatamente al arrancar y luego cada minuto
   void processReminders();
   return setInterval(() => void processReminders(), POLL_INTERVAL_MS);
 }
@@ -35,13 +34,19 @@ async function processReminders(): Promise<void> {
 
       const startMs = new Date(apt.slot_start_time).getTime();
       const diff = startMs - now;
+      const hora = formatTime(apt.slot_start_time);
 
       let message: string | null = null;
 
       if (diff >= WINDOW_24H_MIN && diff <= WINDOW_24H_MAX) {
-        message = '⏰ Recordatorio: tienes una cita mañana. Escribe *menu* para ver tus citas o *cancelar* si no puedes asistir.';
+        message =
+          `⏰ Hola ${apt.customer_name}, te recordamos tu cita *mañana a las ${hora}* ` +
+          `para *${apt.service_name}* en ${apt.business_name}. ` +
+          `Escribe *cancelar* si no puedes asistir.`;
       } else if (diff >= WINDOW_1H_MIN && diff <= WINDOW_1H_MAX) {
-        message = '⏰ Tu cita es en 1 hora. ¡Te esperamos!';
+        message =
+          `⏰ Hola ${apt.customer_name}, tu cita es *en 1 hora (${hora})* ` +
+          `para *${apt.service_name}* en ${apt.business_name}. ¡Te esperamos!`;
       }
 
       if (message) {
@@ -53,4 +58,13 @@ async function processReminders(): Promise<void> {
   } catch (err) {
     console.error('[queue] Error procesando recordatorios:', err);
   }
+}
+
+function formatTime(isoString: string): string {
+  return new Date(isoString).toLocaleTimeString('es-MX', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+    timeZone: 'America/Mexico_City',
+  });
 }
