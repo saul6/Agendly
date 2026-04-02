@@ -1,10 +1,15 @@
 import { Redis } from '@upstash/redis';
 import type { FlowState, ConversationContext } from '../types/index.js';
 
-const redis = new Redis({
-  url: process.env.UPSTASH_REDIS_URL!,
-  token: process.env.UPSTASH_REDIS_TOKEN!,
-});
+const _url = process.env.UPSTASH_REDIS_URL;
+const _token = process.env.UPSTASH_REDIS_TOKEN;
+const REDIS_ENABLED = Boolean(_url && _token);
+
+if (!REDIS_ENABLED) {
+  console.log('[redis] Redis deshabilitado — usando Supabase como almacenamiento');
+}
+
+const _redis: Redis | null = REDIS_ENABLED ? new Redis({ url: _url!, token: _token! }) : null;
 
 const TTL_SECONDS = 24 * 60 * 60; // 24h — igual que el TTL de conversaciones abandonadas
 
@@ -21,8 +26,9 @@ export async function getConversationFromRedis(
   businessId: string,
   customerPhone: string
 ): Promise<CachedConversation | null> {
+  if (!_redis) return null;
   try {
-    return await redis.get<CachedConversation>(convKey(businessId, customerPhone));
+    return await _redis.get<CachedConversation>(convKey(businessId, customerPhone));
   } catch (err) {
     console.warn('[redis] Error leyendo conversación, usando Supabase como fallback:', err);
     return null;
@@ -35,8 +41,9 @@ export async function setConversationInRedis(
   state: FlowState,
   context: ConversationContext
 ): Promise<void> {
+  if (!_redis) return;
   try {
-    await redis.set(
+    await _redis.set(
       convKey(businessId, customerPhone),
       { state, context } satisfies CachedConversation,
       { ex: TTL_SECONDS }
@@ -51,8 +58,9 @@ export async function deleteConversationFromRedis(
   businessId: string,
   customerPhone: string
 ): Promise<void> {
+  if (!_redis) return;
   try {
-    await redis.del(convKey(businessId, customerPhone));
+    await _redis.del(convKey(businessId, customerPhone));
   } catch {
     // Ignorar — expiración TTL limpiará automáticamente
   }
