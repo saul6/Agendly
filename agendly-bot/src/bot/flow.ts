@@ -37,7 +37,7 @@ export async function handleFixedFlow(
 
   // Comando global: volver al menú
   if (['menu', 'menú', '0', 'inicio'].includes(normalized)) {
-    await sendGreeting(phoneNumberId, customerPhone, customerName);
+    await sendGreeting(phoneNumberId, customerPhone, customerName, businessId);
     await upsertConversation(businessId, customerPhone, STATES.GREETING, {});
     return;
   }
@@ -88,7 +88,7 @@ export async function handleFixedFlow(
       break;
 
     default:
-      await sendGreeting(phoneNumberId, customerPhone, customerName);
+      await sendGreeting(phoneNumberId, customerPhone, customerName, businessId);
       await upsertConversation(businessId, customerPhone, STATES.GREETING, {});
   }
 }
@@ -133,7 +133,10 @@ async function handleGreeting(event: IncomingEvent, context: ConversationContext
     return;
   }
 
-  if (replyId === BUTTON_IDS.MY_APPOINTMENTS || normalized.includes('cancelar') || normalized.includes('reagendar')) {
+  if (replyId === BUTTON_IDS.MY_APPOINTMENTS ||
+      ['2', '3'].includes(normalized) ||
+      normalized.includes('cancelar') ||
+      normalized.includes('reagendar')) {
     const appointments = await getAppointmentsByPhone(businessId, customerPhone);
     const upcoming = appointments.filter(
       (a) => a.status === 'confirmed' && new Date(a.slot_id) > new Date()
@@ -141,19 +144,17 @@ async function handleGreeting(event: IncomingEvent, context: ConversationContext
 
     if (!upcoming.length) {
       await sendText(phoneNumberId, customerPhone, 'No tienes citas próximas agendadas.');
-      await sendGreeting(phoneNumberId, customerPhone, customerName);
+      await sendGreeting(phoneNumberId, customerPhone, customerName, businessId);
       return;
     }
 
     // Por simplicidad mostramos la primera cita activa
     const apt = upcoming[0];
-    await sendButtons(phoneNumberId, customerPhone, {
-      body: `Tu próxima cita:\n📅 Cita #${apt.id.slice(-6).toUpperCase()}\nEstado: ${apt.status}`,
-      buttons: [
-        { id: BUTTON_IDS.CANCEL_YES, title: 'Cancelar cita' },
-        { id: BUTTON_IDS.BOOK_NEW, title: 'Nueva cita' },
-      ],
-    });
+    await sendText(
+      phoneNumberId,
+      customerPhone,
+      `Tu próxima cita:\n📅 Cita #${apt.id.slice(-6).toUpperCase()}\nEstado: ${apt.status}\n\n¿Qué deseas hacer?\n1️⃣ Cancelar esta cita\n2️⃣ Agendar una nueva cita\n\nO escribe *menu* para volver al inicio.`,
+    );
 
     await upsertConversation(businessId, customerPhone, STATES.CANCEL_CONFIRM, {
       ...context,
@@ -162,8 +163,29 @@ async function handleGreeting(event: IncomingEvent, context: ConversationContext
     return;
   }
 
+  if (normalized === '4' || normalized.includes('precio') || normalized.includes('informaci')) {
+    const services = await getServices(businessId);
+    if (!services.length) {
+      await sendText(phoneNumberId, customerPhone, ERROR_MESSAGES.NO_SERVICES);
+      await sendGreeting(phoneNumberId, customerPhone, customerName, businessId);
+      return;
+    }
+    const lines = services.map((s) => {
+      const price = s.price ? `$${s.price}` : 'Consultar precio';
+      const duration = s.duration_minutes ? ` · ${s.duration_minutes} min` : '';
+      return `• *${s.name}*: ${price}${duration}`;
+    }).join('\n');
+    await sendText(
+      phoneNumberId,
+      customerPhone,
+      `📋 *Servicios y precios:*\n\n${lines}\n\nEscribe *1* para agendar o *menu* para volver al inicio.`,
+    );
+    await upsertConversation(businessId, customerPhone, STATES.GREETING, {});
+    return;
+  }
+
   // Default: mostrar menú de bienvenida
-  await sendGreeting(phoneNumberId, customerPhone, customerName);
+  await sendGreeting(phoneNumberId, customerPhone, customerName, businessId);
   await upsertConversation(businessId, customerPhone, STATES.GREETING, {});
 }
 
@@ -374,17 +396,18 @@ async function handleConfirmBooking(event: IncomingEvent, context: ConversationC
 }
 
 async function handleCancelConfirm(event: IncomingEvent, context: ConversationContext): Promise<void> {
-  const { businessId, customerPhone, phoneNumberId, interactiveId } = event;
+  const { businessId, customerPhone, phoneNumberId, interactiveId, messageText } = event;
+  const normalized = messageText.toLowerCase().trim();
 
-  if (interactiveId === BUTTON_IDS.CANCEL_YES && context.pending_appointment_id) {
+  if ((interactiveId === BUTTON_IDS.CANCEL_YES || normalized === '1') && context.pending_appointment_id) {
     await cancelAppointment(context.pending_appointment_id);
     await sendText(phoneNumberId, customerPhone,
-      '✅ Tu cita ha sido cancelada. Si deseas agendar una nueva, escribe *agendar*.');
+      '✅ Tu cita ha sido cancelada. Si deseas agendar una nueva, escribe *1* o *agendar*.');
     await upsertConversation(businessId, customerPhone, STATES.IDLE, {});
     return;
   }
 
-  await sendGreeting(phoneNumberId, customerPhone, event.customerName);
+  await sendGreeting(phoneNumberId, customerPhone, event.customerName, businessId);
   await upsertConversation(businessId, customerPhone, STATES.GREETING, {});
 }
 
@@ -402,16 +425,28 @@ async function handleRescheduleTime(event: IncomingEvent, context: ConversationC
 async function sendGreeting(
   phoneNumberId: string,
   to: string,
-  name: string
+  customerName: string,
+  businessId: string,
 ): Promise<void> {
-  await sendButtons(phoneNumberId, to, {
-    body: `¡Hola${name ? ` ${name}` : ''}! 👋 Bienvenido/a. ¿En qué te puedo ayudar?`,
-    buttons: [
-      { id: BUTTON_IDS.BOOK_NEW, title: 'Agendar cita 📅' },
-      { id: BUTTON_IDS.MY_APPOINTMENTS, title: 'Mis citas' },
-      { id: BUTTON_IDS.HELP, title: 'Ayuda' },
-    ],
-  });
+  const business = await getBusinessById(businessId);
+  const businessName = business?.name ?? 'nuestro negocio';
+  const hello = customerName ? `¡Hola ${customerName}! 👋` : '¡Hola! 👋';
+  await sendText(
+    phoneNumberId,
+    to,
+    `${hello} Bienvenido/a a *${businessName}*.\n\n¿En qué te puedo ayudar?\n\n1️⃣ Agendar una cita\n2️⃣ Ver mis citas\n3️⃣ Cancelar una cita\n4️⃣ Información y precios`,
+  );
+}
+
+export async function sendMenuFallback(
+  phoneNumberId: string,
+  to: string,
+): Promise<void> {
+  await sendText(
+    phoneNumberId,
+    to,
+    'No entendí tu mensaje 😅 ¿En qué te puedo ayudar?\n\n1️⃣ Agendar una cita\n2️⃣ Ver mis citas\n3️⃣ Cancelar una cita\n4️⃣ Información y precios',
+  );
 }
 
 async function sendDatePicker(phoneNumberId: string, to: string): Promise<void> {
